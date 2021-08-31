@@ -144,6 +144,9 @@ class Timelord:
         self.last_active_time = time.time()
         self.max_allowed_inactivity_time = 60
         self.bluebox_pool: Optional[ProcessPoolExecutor] = None
+        # Keeps track of the heights we're working on
+        # {height: processCount} - number of processes working on the particular height at a given time
+        self.working_heights: Dict[uint32, int] = {}
 
     @contextlib.asynccontextmanager
     async def manage(self) -> AsyncIterator[None]:
@@ -1089,6 +1092,8 @@ class Timelord:
                         "new_compact_proof", {"header_hash": header_hash, "height": height, "field_vdf": field_vdf}
                     )
 
+                    # Keep track that we finished one from this height
+                    self.working_heights[height] -= 1
         except ConnectionResetError as e:
             log.debug(f"Connection reset with VDF client {e}")
 
@@ -1125,6 +1130,10 @@ class Timelord:
                                 )
                             )
                         )
+                        if info[1].height in self.working_heights:
+                            self.working_heights[info[1].height] += 1
+                        else:
+                            self.working_heights[info[1].height] = 1
                         self.pending_bluebox_info.remove(info)
                         self.free_clients = self.free_clients[1:]
                 except Exception as e:
