@@ -9,11 +9,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$extras = @()
+$extras = @("upnp")
 if ($d)
 {
     $extras += "dev"
-    $extras += "upnp"
 }
 
 $pip_parameters = @()

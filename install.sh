@@ -18,7 +18,7 @@ usage() {
   echo "${USAGE_TEXT}"
 }
 
-EXTRAS=
+EXTRAS=upnp,
 PLOTTER_INSTALL=
 EDITABLE='-e'
 
