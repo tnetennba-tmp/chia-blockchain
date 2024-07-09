@@ -150,10 +150,6 @@ test_constants = DEFAULT_CONSTANTS.replace(
     # Allows creating blockchains with timestamps up to 10 days in the future, for testing
     MAX_FUTURE_TIME2=uint32(3600 * 24 * 10),
     MEMPOOL_BLOCK_BUFFER=uint8(6),
-    # we deliberately make this different from HARD_FORK_HEIGHT in the
-    # tests, to ensure they operate independently (which they need to do for
-    # testnet10)
-    HARD_FORK_FIX_HEIGHT=uint32(5496100),
 )
 
 
@@ -1915,22 +1911,22 @@ def compute_cost_table() -> List[int]:
 CONDITION_COSTS = compute_cost_table()
 
 
-def conditions_cost(conds: Program, hard_fork: bool) -> uint64:
+def conditions_cost(conds: Program) -> uint64:
     condition_cost = 0
     for cond in conds.as_iter():
         condition = cond.first().as_atom()
-        if condition in [ConditionOpcode.AGG_SIG_UNSAFE, ConditionOpcode.AGG_SIG_ME]:
-            condition_cost += ConditionCost.AGG_SIG.value
-        elif condition == ConditionOpcode.CREATE_COIN:
+        if condition == ConditionOpcode.CREATE_COIN:
             condition_cost += ConditionCost.CREATE_COIN.value
         # after the 2.0 hard fork, two byte conditions (with no leading 0)
         # have costs. Account for that.
-        elif hard_fork and len(condition) == 2 and condition[0] != 0:
+        elif len(condition) == 2 and condition[0] != 0:
             condition_cost += CONDITION_COSTS[condition[1]]
-        elif hard_fork and condition == ConditionOpcode.SOFTFORK.value:
+        elif condition == ConditionOpcode.SOFTFORK.value:
             arg = cond.rest().first().as_int()
             condition_cost += arg * 10000
-        elif hard_fork and condition in [
+        elif condition in [
+            ConditionOpcode.AGG_SIG_UNSAFE,
+            ConditionOpcode.AGG_SIG_ME,
             ConditionOpcode.AGG_SIG_PARENT,
             ConditionOpcode.AGG_SIG_PUZZLE,
             ConditionOpcode.AGG_SIG_AMOUNT,
@@ -1953,8 +1949,7 @@ def compute_fee_test(additions: Sequence[Coin], removals: Sequence[Coin]) -> uin
     ret = removal_amount - addition_amount
     # in order to allow creating blocks that mint coins, clamp the fee
     # to 0, if it ends up being negative
-    if ret < 0:
-        ret = 0
+    ret = max(ret, 0)
     return uint64(ret)
 
 
@@ -1966,7 +1961,7 @@ def compute_cost_test(generator: BlockGenerator, constants: ConsensusConstants, 
     condition_cost = 0
     clvm_cost = 0
 
-    if height >= constants.HARD_FORK_FIX_HEIGHT:
+    if height >= constants.HARD_FORK_HEIGHT:
         blocks = [bytes(g) for g in generator.generator_refs]
         cost, result = generator.program._run(INFINITE_COST, MEMPOOL_MODE | ALLOW_BACKREFS, [DESERIALIZE_MOD, blocks])
         clvm_cost += cost
@@ -1979,7 +1974,7 @@ def compute_cost_test(generator: BlockGenerator, constants: ConsensusConstants, 
 
             cost, result = puzzle._run(INFINITE_COST, MEMPOOL_MODE, solution)
             clvm_cost += cost
-            condition_cost += conditions_cost(result, height >= constants.HARD_FORK_HEIGHT)
+            condition_cost += conditions_cost(result)
 
     else:
         block_program_args = SerializedProgram.to([[bytes(g) for g in generator.generator_refs]])
@@ -1989,7 +1984,7 @@ def compute_cost_test(generator: BlockGenerator, constants: ConsensusConstants, 
             # each condition item is:
             # (parent-coin-id puzzle-hash amount conditions)
             conditions = res.at("rrrf")
-            condition_cost += conditions_cost(conditions, height >= constants.HARD_FORK_HEIGHT)
+            condition_cost += conditions_cost(conditions)
 
     size_cost = len(bytes(generator.program)) * constants.COST_PER_BYTE
 

@@ -34,7 +34,7 @@ from chia.protocols import full_node_protocol as fnp
 from chia.protocols import timelord_protocol, wallet_protocol
 from chia.protocols.full_node_protocol import RespondTransaction
 from chia.protocols.protocol_message_types import ProtocolMessageTypes
-from chia.protocols.shared_protocol import Capability, capabilities
+from chia.protocols.shared_protocol import Capability, default_capabilities
 from chia.protocols.wallet_protocol import SendTransaction, TransactionAck
 from chia.server.address_manager import AddressManager
 from chia.server.outbound_message import Message, NodeType
@@ -60,11 +60,11 @@ from chia.types.mempool_inclusion_status import MempoolInclusionStatus
 from chia.types.peer_info import PeerInfo, TimestampedPeerInfo
 from chia.types.spend_bundle import SpendBundle, estimate_fees
 from chia.types.unfinished_block import UnfinishedBlock
+from chia.util.batches import to_batches
 from chia.util.errors import ConsensusError, Err
 from chia.util.hash import std_hash
 from chia.util.ints import uint8, uint16, uint32, uint64, uint128
 from chia.util.limited_semaphore import LimitedSemaphore
-from chia.util.misc import to_batches
 from chia.util.recursive_replace import recursive_replace
 from chia.util.vdf_prover import get_vdf_info_and_proof
 from chia.wallet.util.tx_config import DEFAULT_TX_CONFIG
@@ -127,13 +127,21 @@ async def test_sync_no_farmer(
 
     # full node 1 has the complete chain
     for block_batch in to_batches(blocks, 64):
-        await full_node_1.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await full_node_1.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     target_peak = full_node_1.full_node.blockchain.get_peak()
 
     # full node 2 is behind by 800 blocks
     for block_batch in to_batches(blocks[:-800], 64):
-        await full_node_2.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await full_node_2.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     # connect the nodes and wait for node 2 to sync up to node 1
     await connect_and_get_peer(server_1, server_2, self_hostname)
@@ -210,7 +218,7 @@ class TestFullNodeBlockCompression:
         program: Optional[SerializedProgram] = (await full_node_1.get_all_full_blocks())[-1].transactions_generator
         assert program is not None
         template = detect_potential_template_generator(uint32(5), program)
-        if consensus_mode == ConsensusMode.HARD_FORK_2_0:
+        if consensus_mode >= ConsensusMode.HARD_FORK_2_0:
             # after the hard fork we don't use this compression mechanism
             # anymore, we use CLVM backrefs in the encoding instead
             assert template is None
@@ -246,7 +254,7 @@ class TestFullNodeBlockCompression:
         assert program is not None
         assert detect_potential_template_generator(uint32(6), program) is None
         num_blocks = len((await full_node_1.get_all_full_blocks())[-1].transactions_generator_ref_list)
-        if consensus_mode == ConsensusMode.HARD_FORK_2_0:
+        if consensus_mode >= ConsensusMode.HARD_FORK_2_0:
             # after the hard fork we don't use this compression mechanism
             # anymore, we use CLVM backrefs in the encoding instead
             assert num_blocks == 0
@@ -327,7 +335,7 @@ class TestFullNodeBlockCompression:
         assert program is not None
         assert detect_potential_template_generator(uint32(9), program) is None
         num_blocks = len((await full_node_1.get_all_full_blocks())[-1].transactions_generator_ref_list)
-        if consensus_mode == ConsensusMode.HARD_FORK_2_0:
+        if consensus_mode >= ConsensusMode.HARD_FORK_2_0:
             # after the hard fork we don't use this compression mechanism
             # anymore, we use CLVM backrefs in the encoding instead
             assert num_blocks == 0
@@ -422,7 +430,7 @@ class TestFullNodeBlockCompression:
         program: Optional[SerializedProgram] = (await full_node_1.get_all_full_blocks())[-1].transactions_generator
         assert program is not None
         template = detect_potential_template_generator(uint32(11), program)
-        if consensus_mode == ConsensusMode.HARD_FORK_2_0:
+        if consensus_mode >= ConsensusMode.HARD_FORK_2_0:
             # after the hard fork we don't use this compression mechanism
             # anymore, we use CLVM backrefs in the encoding instead
             assert template is None
@@ -437,7 +445,7 @@ class TestFullNodeBlockCompression:
         assert height == len(all_blocks) - 1
 
         template = full_node_1.full_node.full_node_store.previous_generator
-        if consensus_mode == ConsensusMode.HARD_FORK_2_0:
+        if consensus_mode >= ConsensusMode.HARD_FORK_2_0:
             # after the hard fork we don't use this compression mechanism
             # anymore, we use CLVM backrefs in the encoding instead
             assert template is None
@@ -2178,9 +2186,9 @@ class TestFullNodeProtocol:
         argnames=["custom_capabilities", "expect_success"],
         argvalues=[
             # standard
-            [capabilities, True],
+            [default_capabilities[NodeType.FULL_NODE], True],
             # an additional enabled but unknown capability
-            [[*capabilities, (uint16(max(Capability) + 1), "1")], True],
+            [[*default_capabilities[NodeType.FULL_NODE], (uint16(max(Capability) + 1), "1")], True],
             # no capability, not even Chia mainnet
             # TODO: shouldn't we fail without Capability.BASE?
             [[], True],
@@ -2295,7 +2303,11 @@ async def test_long_reorg(
         b = block_batch.entries[0]
         if (b.height % 128) == 0:
             print(f"main chain: {b.height:4} weight: {b.weight}")
-        await node.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await node.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     peak = node.full_node.blockchain.get_peak()
     chain_1_height = peak.height
@@ -2385,14 +2397,22 @@ async def test_long_reorg_nodes(
         b = block_batch.entries[0]
         if (b.height % 128) == 0:
             print(f"main chain: {b.height:4} weight: {b.weight}")
-        await full_node_1.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await full_node_1.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     # full node 2 has the reorg-chain
     for block_batch in to_batches(reorg_blocks[:-1], 64):
         b = block_batch.entries[0]
         if (b.height % 128) == 0:
             print(f"reorg chain: {b.height:4} weight: {b.weight}")
-        await full_node_2.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await full_node_2.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     await connect_and_get_peer(full_node_1.full_node.server, full_node_2.full_node.server, self_hostname)
 
@@ -2427,7 +2447,11 @@ async def test_long_reorg_nodes(
         b = block_batch.entries[0]
         if (b.height % 128) == 0:
             print(f"main chain: {b.height:4} weight: {b.weight}")
-        await full_node_3.full_node.add_block_batch(block_batch.entries, PeerInfo("0.0.0.0", 8884), None)
+        success, change, err = await full_node_3.full_node.add_block_batch(
+            block_batch.entries, PeerInfo("0.0.0.0", 8884), None
+        )
+        assert err is None
+        assert success is True
 
     print("connecting node 3")
     await connect_and_get_peer(full_node_3.full_node.server, full_node_1.full_node.server, self_hostname)

@@ -6,7 +6,6 @@ from typing import List, Optional, Tuple
 from chia_rs import G1Element
 from clvm.casts import int_to_bytes
 
-from chia.clvm.singleton import SINGLETON_LAUNCHER
 from chia.consensus.block_rewards import calculate_pool_reward
 from chia.consensus.coinbase import pool_parent_id
 from chia.pools.pool_wallet_info import LEAVING_POOL, SELF_POOLING, PoolState
@@ -35,6 +34,7 @@ POOL_WAITING_ROOM_HASH = POOL_WAITING_ROOM_MOD.get_tree_hash()
 P2_SINGLETON_HASH = P2_SINGLETON_MOD.get_tree_hash()
 P2_SINGLETON_HASH_QUOTED = calculate_hash_of_quoted_mod_hash(P2_SINGLETON_HASH)
 POOL_OUTER_MOD_HASH = POOL_OUTER_MOD.get_tree_hash()
+SINGLETON_LAUNCHER = load_clvm_maybe_recompile("singleton_launcher.clsp")
 SINGLETON_LAUNCHER_HASH = SINGLETON_LAUNCHER.get_tree_hash()
 SINGLETON_LAUNCHER_HASH_TREE_HASH = shatree_atom(SINGLETON_LAUNCHER_HASH)
 SINGLETON_MOD_HASH = POOL_OUTER_MOD_HASH
@@ -129,7 +129,8 @@ def get_delayed_puz_info_from_launcher_spend(coinsol: CoinSpend) -> Tuple[uint64
         if key.atom == b"t":
             seconds = uint64(value.as_int())
         if key.atom == b"h":
-            delayed_puzzle_hash = bytes32(value.as_atom())
+            assert value.atom is not None
+            delayed_puzzle_hash = bytes32(value.atom)
     assert seconds is not None
     assert delayed_puzzle_hash is not None
     return seconds, delayed_puzzle_hash
@@ -377,10 +378,7 @@ def get_inner_puzzle_from_puzzle(full_puzzle: Program) -> Optional[Program]:
     _, inner_puzzle = list(args.as_iter())
     if not is_pool_singleton_inner_puzzle(inner_puzzle):
         return None
-    # ignoring hint error here for:
-    # https://github.com/Chia-Network/clvm/pull/102
-    # https://github.com/Chia-Network/clvm/pull/106
-    return inner_puzzle  # type: ignore[no-any-return]
+    return inner_puzzle
 
 
 def pool_state_from_extra_data(extra_data: Program) -> Optional[PoolState]:

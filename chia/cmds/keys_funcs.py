@@ -756,6 +756,8 @@ def derive_child_key(
         derivation_root_pk, derivation_root_sk, hd_path_root = derive_pk_and_sk_from_hd_path(
             current_pk, derive_from_hd_path, master_sk=current_sk
         )
+    else:
+        raise Exception("Neither key type nor HD path was specified")
 
     # Derive child keys from derivation_root_sk
     for i in range(index, index + count):
@@ -842,9 +844,7 @@ def resolve_derivation_master_key(fingerprint_or_filename: Optional[Union[int, s
     Given a key fingerprint of file containing a mnemonic seed, return the private key.
     """
 
-    if fingerprint_or_filename is not None and (
-        isinstance(fingerprint_or_filename, str) or isinstance(fingerprint_or_filename, Path)
-    ):
+    if fingerprint_or_filename is not None and (isinstance(fingerprint_or_filename, (str, Path))):
         return private_key_from_mnemonic_seed_file(Path(os.fspath(fingerprint_or_filename)))
     else:
         ret = get_private_key_with_fingerprint_or_prompt(fingerprint_or_filename)
