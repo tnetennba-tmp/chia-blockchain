@@ -13,6 +13,7 @@ $extras = @()
 if ($d)
 {
     $extras += "dev"
+    $extras += "upnp"
 }
 
 $pip_parameters = @()
