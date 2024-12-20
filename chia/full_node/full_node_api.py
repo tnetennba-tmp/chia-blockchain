@@ -1502,6 +1502,31 @@ class FullNodeAPI:
         return make_msg(ProtocolMessageTypes.respond_block_headers, respond_header_blocks_manually_streamed)
 
     @metadata.request()
+    async def request_block_headers_simpler(self, request: wallet_protocol.RequestBlockHeaders) -> Optional[Message]:
+        """
+        This method should be used instead of RequestHeaderBlocks
+        """
+        reject = RejectBlockHeaders(request.start_height, request.end_height)
+        if request.end_height < request.start_height or request.end_height - request.start_height > 128:
+            return make_msg(ProtocolMessageTypes.reject_block_headers, reject)
+        try:
+            header_blocks_map = await self.full_node.blockchain.get_header_blocks_in_range(
+                request.start_height, request.end_height, request.return_filter
+            )
+        except ValueError:
+            return make_msg(ProtocolMessageTypes.reject_block_headers, reject)
+        if len(header_blocks_map) != (
+            request.end_height - request.start_height + 1
+        ):  # +1 because interval is inclusive
+            return make_msg(ProtocolMessageTypes.reject_block_headers, reject)
+        return make_msg(
+            ProtocolMessageTypes.respond_block_headers,
+            wallet_protocol.RespondBlockHeaders(
+                request.start_height, request.end_height, list(header_blocks_map.values())
+            ),
+        )
+
+    @metadata.request()
     async def request_header_blocks(self, request: wallet_protocol.RequestHeaderBlocks) -> Optional[Message]:
         """DEPRECATED: please use RequestBlockHeaders"""
         if (

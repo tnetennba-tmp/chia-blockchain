@@ -17,7 +17,7 @@ from colorlog import getLogger
 
 from chia._tests.connection_utils import connect_and_get_peer, disconnect_all, disconnect_all_and_reconnect
 from chia._tests.util.blockchain_mock import BlockchainMock
-from chia._tests.util.misc import patch_request_handler, wallet_height_at_least
+from chia._tests.util.misc import BenchmarkRunner, patch_request_handler, wallet_height_at_least
 from chia._tests.util.setup_nodes import OldSimulatorsAndWallets
 from chia._tests.util.time_out_assert import time_out_assert, time_out_assert_not_none
 from chia._tests.weight_proof.test_weight_proof import load_blocks_dont_validate
@@ -117,7 +117,7 @@ async def test_request_block_headers(
 @pytest.mark.limit_consensus_modes(reason="save time")
 @pytest.mark.anyio
 async def test_request_block_headers_transactions_filter(
-    one_node_one_block: tuple[FullNodeSimulator, ChiaServer, BlockTools],
+    one_node_one_block: tuple[FullNodeSimulator, ChiaServer, BlockTools], benchmark_runner: BenchmarkRunner
 ) -> None:
     """
     Tests that `request_block_headers` returns a transactions filter that
@@ -177,6 +177,25 @@ async def test_request_block_headers_transactions_filter(
     block_header_res = RespondBlockHeader.from_bytes(msg.data)
     assert block_header_res.header_block == block_header
     assert block_header_res.header_block.transactions_filter == expected_transactions_filter
+    block_cache = full_node_api.full_node.blockchain.block_store.block_cache
+    runs = 100
+    seconds = 1
+    with benchmark_runner.assert_runtime(seconds=seconds, label="request_header_blocks"):
+        for _ in range(runs):
+            # Remove block from the cache (just to match the other benchmark)
+            if new_block.header_hash in block_cache.cache:
+                block_cache.remove(new_block.header_hash)
+            msg = await full_node_api.request_block_headers(
+                wallet_protocol.RequestBlockHeaders(uint32(0), uint32(new_block.height), True)
+            )
+    with benchmark_runner.assert_runtime(seconds=seconds, label="simpler request_header_blocks"):
+        for _ in range(runs):
+            # Remove block from the cache
+            if new_block.header_hash in block_cache.cache:
+                block_cache.remove(new_block.header_hash)
+            msg = await full_node_api.request_block_headers_simpler(
+                wallet_protocol.RequestBlockHeaders(uint32(0), uint32(new_block.height), True)
+            )
 
 
 # @pytest.mark.parametrize(
